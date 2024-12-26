@@ -1,33 +1,53 @@
-/* eslint-disable react/forbid-component-props */
 import React, {
     useEffect,
     useMemo,
     useRef,
     useState
 } from 'react';
-import styled, { css } from 'styled-components/native';
 import {
     PanResponder,
     Animated
 } from 'react-native';
+import styled, { css } from 'styled-components/native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useLayout } from '@codexporer.io/expo-layout-state';
 import { useDimensions } from '@codexporer.io/react-hooks';
 import inRange from 'lodash/inRange';
 import noop from 'lodash/noop';
 import { Text } from 'react-native-paper';
 import { formatTimeSpan, TimeSpanFormat } from '@pole-journal/formatters';
+import { runOnJS } from 'react-native-reanimated';
+import { v4 as uuid } from 'uuid';
+import {
+    useAppSnackbarActions,
+    APP_SNACKBAR_POSITION,
+    APP_SNACKBAR_DURATION
+} from '@codexporer.io/expo-app-snackbar';
 import {
     useIsVideoComponentBusy,
     usePositionInMillis,
     useSetIsVideoComponentBusy,
     useVideoComponentRef,
-    useVideoData
+    useVideoData,
+    useIsPlaying,
+    useTrimStart,
+    useSetTrimStart,
+    useTrimEnd,
+    useSetTrimEnd,
+    useIsMuted,
+    useSetIsMuted,
+    useVideoEditorConfigImageCaptureAction,
+    useSetIsProcessing,
+    useVideoEditorConfigMaxVideoDurationInSeconds
 } from './state';
+import { IconButton } from './icon-button';
+import { getVideoSnapshotUri } from './get-video-cover-uri';
+import resizerImage from './assets/resizer.png';
 
 const HEIGHT = 40;
 const PADDING = 80;
 const CORNER_THUMB_WIDTH = 20;
-const CORNER_RESPONDER_WIDTH = 40;
+const CORNER_RESPONDER_WIDTH = 10;
 const CALCULATED_PADDING = PADDING / 2 - CORNER_THUMB_WIDTH / 2;
 const CORNERS_EXTRA_HEIGHT = 20;
 const POINTER_THUMB_EXTRA_HEIGHT = 20;
@@ -35,7 +55,6 @@ const CORNERS_HEIGHT = HEIGHT + CORNERS_EXTRA_HEIGHT;
 const POINTER_THUMB_WIDTH = 2;
 
 const Root = styled.View`
-    // background-color: brown;
     padding-left: ${CALCULATED_PADDING}px;
     padding-right: ${CALCULATED_PADDING}px;
 `;
@@ -49,7 +68,7 @@ const containerStyle = css`
 
 const Container = styled.View`
     ${containerStyle}
-    background-color: red;
+    background-color: rgba(255, 255, 255, 0.4);
     margin-top: ${(CORNERS_EXTRA_HEIGHT + POINTER_THUMB_EXTRA_HEIGHT) / 2}px;
 `;
 
@@ -60,8 +79,7 @@ const Corners = styled.View`
     flex: 1;
     flex-direction: row;
     justify-content: space-between;
-    overflow: hidden;
-    // background-color: rgba(255, 255, 255, 0.4);
+    overflow: visible;
 `;
 
 const LeftSection = styled(Animated.View)`
@@ -99,11 +117,12 @@ const RightCornerResponder = styled.View`
     left: -${CORNER_RESPONDER_WIDTH}px
 `;
 
-const CornerThumb = styled.View`
-    background-color: blue;
+const CornerThumb = styled.Image`
+    background-color: transparent;
     width: ${CORNER_THUMB_WIDTH}px;
     height: ${CORNERS_HEIGHT}px;
     margin-top: -${CORNERS_EXTRA_HEIGHT / 2}px;
+    ${({ isRight }) => isRight ? 'transform: rotate(180deg);' : ''}
 `;
 
 const PointerThumb = styled(Animated.View)`
@@ -112,7 +131,15 @@ const PointerThumb = styled(Animated.View)`
     height: ${CORNERS_HEIGHT + POINTER_THUMB_EXTRA_HEIGHT}px;
     top: 0px;
     left: ${({ left }) => left}px;
-    background-color: white;
+    background-color: #e0e0e0;
+`;
+
+const Progress = styled.View`
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: ${CORNERS_EXTRA_HEIGHT / 2}px;
+    bottom: ${CORNERS_EXTRA_HEIGHT / 2}px;
 `;
 
 const CornerLine = styled.View`
@@ -127,6 +154,34 @@ const Spacer = styled.View`
 const Time = styled(Text)`
     text-align: center;
     color: white;
+`;
+
+const LimitMessage = styled(Text)`
+    position: absolute;
+    top: ${({ top = 0 }) => -top - 10}px;
+    left: 10px;
+    right: 10px;
+    padding: 10px;
+    background-color: ${({ top = 0 }) => top ? 'rgba(0, 0, 0, 0.5)' : 'transparent'};
+    text-align: center;
+    color: ${({ top = 0 }) => top ? 'white' : 'transparent'};
+`;
+
+const BottomActionsRoot = styled.View`
+    background-color: ${({ theme }) => theme.colors.primary};
+    padding-left: 10px;
+    padding-right: 10px;
+`;
+
+const BottomActionsContainer = styled.View`
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    justify-content: flex-start;
+`;
+
+const BottomActionSpacer = styled.View`
+    width: 10px;
 `;
 
 const calculateCornerResult = (duration, value, width, fromRight) => {
@@ -158,23 +213,119 @@ const calculatePointerThumbOffset = (offset, leftOffset, rightOffset) => {
     return offset;
 };
 
+const BottomActions = ({
+    isPlaying,
+    onPlay,
+    isMuted,
+    onMute,
+    onImageCapture,
+    imageCaptureActionConfig
+}) => (
+    <BottomActionsRoot>
+        <BottomActionsContainer>
+            <BottomAction
+                iconName={isPlaying ? 'pause-circle' : 'play-circle'}
+                text={isPlaying ? 'Pause' : 'Play'}
+                onPress={() => {
+                    onPlay(!isPlaying);
+                }}
+            />
+            <BottomActionSpacer />
+            <BottomAction
+                iconName={isMuted ? 'volume-high' : 'volume-off'}
+                text={isMuted ? 'Retrieve Sound' : 'Remove Sound'}
+                onPress={() => {
+                    onMute(!isMuted);
+                }}
+            />
+            {!!imageCaptureActionConfig?.getIsVisible?.() &&
+                !!imageCaptureActionConfig?.onCapture &&
+                (
+                    <>
+                        <BottomActionSpacer />
+                        <BottomAction
+                            iconName='camera-plus'
+                            text={imageCaptureActionConfig.label}
+                            isDisabled={!imageCaptureActionConfig?.getIsEnabled?.()}
+                            onPress={onImageCapture}
+                        />
+                    </>
+                )
+            }
+        </BottomActionsContainer>
+        <Spacer />
+    </BottomActionsRoot>
+);
+
+const BottomAction = ({
+    iconName,
+    text,
+    onPress,
+    isDisabled
+}) => (
+    <IconButton
+        iconName={iconName}
+        text={text}
+        onPress={onPress}
+        isDisabled={isDisabled}
+    />
+);
+
 export const Trimmer = () => {
     const { width: windowWidth } = useDimensions('window');
     const {
         currentLayout: { width },
         setCurrentLayout
     } = useLayout({ width: windowWidth });
-    const { duration } = useVideoData();
-    const [startTime, setStartTime] = useState(0);
-    const [endTime, setEndTime] = useState(duration);
-    const [canSetEndTime, setCanSetEndTime] = useState(false);
+    const {
+        currentLayout: {
+            height: limitMessageHeight
+        },
+        setCurrentLayout: setLimitMessageLayout
+    } = useLayout({ width: windowWidth });
+    const {
+        duration,
+        uri
+    } = useVideoData();
+    const trimStart = useTrimStart();
+    const setTrimStart = useSetTrimStart();
+    const trimEnd = useTrimEnd();
+    const setTrimEnd = useSetTrimEnd();
+    const [currentTime, setCurrentTime] = useState(trimStart);
     const videoComponentRef = useVideoComponentRef();
+    const imageCaptureActionConfig = useVideoEditorConfigImageCaptureAction();
+    const maxVideoDurationInSeconds = useVideoEditorConfigMaxVideoDurationInSeconds();
     const isVideoComponentBusy = useIsVideoComponentBusy();
     const setIsVideoComponentBusy = useSetIsVideoComponentBusy();
     const positionInMillis = usePositionInMillis();
+    const isPlaying = useIsPlaying();
+    const isMuted = useIsMuted();
+    const setIsMuted = useSetIsMuted();
+    const setIsProcessing = useSetIsProcessing();
+    const [, { show: showAppSnackbar }] = useAppSnackbarActions();
+    const [, setComponentRefreshId] = useState('');
 
     const isVideoComponentBusyRef = useRef();
     isVideoComponentBusyRef.current = isVideoComponentBusy;
+
+    const onProgressChange = progressOffset => {
+        setCurrentTime(
+            calculateCornerResult(
+                duration,
+                progressOffset,
+                width - PADDING
+            )
+        );
+    };
+    const progressTapGesture = Gesture.Tap()
+        .numberOfTaps(1)
+        .onStart(event => {
+            runOnJS(onProgressChange)(event.absoluteX - CALCULATED_PADDING);
+        });
+
+    const progressDragGesture = Gesture.Pan().onChange(event => {
+        runOnJS(onProgressChange)(event.absoluteX - CALCULATED_PADDING);
+    });
 
     const leftCornerPosRef = useRef();
     const rightCornerPosRef = useRef();
@@ -226,7 +377,7 @@ export const Trimmer = () => {
     }, []);
 
     handleLeftCornerMoveRef.current = (e, gestureState) => {
-        setStartTime(
+        setTrimStart(
             calculateCornerResult(duration, leftCornerPosRef.current, width - PADDING)
         );
 
@@ -235,11 +386,11 @@ export const Trimmer = () => {
 
     handleLeftCornerReleaseRef.current = () => {
         if (leftCornerPosRef.current < 0) {
-            setStartTime(0);
+            setTrimStart(0);
             leftCorner.setOffset(0);
-        } else if (endTime - startTime < 1) {
-            const startTime = endTime - 1;
-            setStartTime(startTime);
+        } else if (trimEnd - trimStart < 1) {
+            const startTime = trimEnd - 1;
+            setTrimStart(startTime);
             leftCorner.setOffset(calculateOffset(duration, startTime, width));
         } else {
             leftCorner.setOffset(leftCornerPosRef.current);
@@ -249,7 +400,7 @@ export const Trimmer = () => {
     };
 
     handleRightCornerMoveRef.current = (e, gestureState) => {
-        setEndTime(
+        setTrimEnd(
             calculateCornerResult(duration, rightCornerPosRef.current, width - PADDING, true)
         );
 
@@ -258,11 +409,11 @@ export const Trimmer = () => {
 
     handleRightCornerReleaseRef.current = () => {
         if (rightCornerPosRef.current > 0) {
-            setEndTime(duration);
+            setTrimEnd(duration);
             rightCorner.setOffset(0);
-        } else if (endTime - startTime < 1) {
-            const endTime = startTime + 1;
-            setEndTime(endTime);
+        } else if (trimEnd - trimStart < 1) {
+            const endTime = trimStart + 1;
+            setTrimEnd(endTime);
             rightCorner.setOffset(calculateOffset(duration, endTime, width, true));
         } else {
             rightCorner.setOffset(rightCornerPosRef.current);
@@ -272,53 +423,130 @@ export const Trimmer = () => {
     };
 
     useEffect(() => {
+        setTrimEnd(duration);
+    }, [setTrimEnd, duration]);
+
+    useEffect(() => {
+        if (trimStart != null && !Number.isNaN(trimStart)) {
+            setCurrentTime(trimStart);
+        }
+    }, [
+        trimStart,
+        setIsVideoComponentBusy,
+        videoComponentRef
+    ]);
+
+    useEffect(() => {
+        if (trimEnd != null && !Number.isNaN(trimEnd)) {
+            setCurrentTime(trimEnd);
+        }
+    }, [trimEnd, setIsVideoComponentBusy, videoComponentRef]);
+
+    useEffect(() => {
         if (isVideoComponentBusyRef.current) {
             return;
         }
 
-        if (startTime != null && !Number.isNaN(startTime)) {
+        if (currentTime != null && !Number.isNaN(currentTime)) {
             setIsVideoComponentBusy(true);
             videoComponentRef.current.setPositionAsync(
-                startTime * 1000,
+                currentTime * 1000,
                 { toleranceMillisBefore: 0, toleranceMillisAfter: 0 }
             ).then(() => {
                 setIsVideoComponentBusy(false);
             }).catch(noop);
         }
     }, [
-        startTime,
+        currentTime,
         setIsVideoComponentBusy,
         videoComponentRef
     ]);
 
-    const canSetEndTimeRef = useRef();
-    canSetEndTimeRef.current = canSetEndTime;
     useEffect(() => {
         if (isVideoComponentBusyRef.current) {
             return;
         }
 
-        if (endTime != null && !Number.isNaN(endTime)) {
-            if (canSetEndTimeRef.current) {
-                setIsVideoComponentBusy(true);
-                videoComponentRef.current.setPositionAsync(
-                    endTime * 1000,
+        const hasReachedEnd = isPlaying &&
+            Math.floor(positionInMillis / 1000) >= Math.floor(trimEnd);
+        if (hasReachedEnd) {
+            setIsVideoComponentBusy(true);
+            videoComponentRef.current.pauseAsync()
+                .then(() => videoComponentRef.current.setPositionAsync(
+                    trimEnd * 1000,
                     { toleranceMillisBefore: 0, toleranceMillisAfter: 0 }
-                ).then(() => {
+                )).then(() => {
                     setIsVideoComponentBusy(false);
                 }).catch(noop);
-            }
-            setCanSetEndTime(true);
         }
-    }, [endTime, setIsVideoComponentBusy, videoComponentRef]);
+    }, [
+        positionInMillis,
+        isPlaying,
+        trimStart,
+        trimEnd,
+        setIsVideoComponentBusy,
+        videoComponentRef
+    ]);
+
+    const onPlay = shouldPlay => {
+        if (isVideoComponentBusyRef.current) {
+            return;
+        }
+
+        setIsVideoComponentBusy(true);
+        const hasReachedEnd = Math.floor(positionInMillis / 1000) >= Math.floor(trimEnd);
+        videoComponentRef.current?.[shouldPlay ? (hasReachedEnd ? 'playFromPositionAsync' : 'playAsync') : 'pauseAsync'](
+            ...(
+                shouldPlay && hasReachedEnd ?
+                    [trimStart * 1000, { toleranceMillisBefore: 0, toleranceMillisAfter: 0 }] :
+                    []
+            )
+        ).then(() => {
+            setIsVideoComponentBusy(false);
+        }).catch(noop);
+    };
+
+    const onMute = shouldMute => {
+        if (isVideoComponentBusyRef.current) {
+            return;
+        }
+
+        setIsVideoComponentBusy(true);
+        videoComponentRef.current?.setIsMutedAsync(shouldMute).then(() => {
+            setIsMuted(shouldMute);
+            setIsVideoComponentBusy(false);
+            showAppSnackbar({
+                message: shouldMute ? 'Video muted' : 'Video unmuted',
+                duration: APP_SNACKBAR_DURATION.short,
+                position: APP_SNACKBAR_POSITION.bottom
+            });
+        }).catch(noop);
+    };
+
+    const onImageCapture = async () => {
+        setIsProcessing(true);
+        const url = await getVideoSnapshotUri({
+            url: uri,
+            maxImageSize: imageCaptureActionConfig.maxImageSize,
+            timeInSeconds: currentTime
+        });
+        imageCaptureActionConfig.onCapture({ url });
+        setComponentRefreshId(uuid());
+        setIsProcessing(false);
+        showAppSnackbar({
+            message: imageCaptureActionConfig.successMessage,
+            duration: APP_SNACKBAR_DURATION.short,
+            position: APP_SNACKBAR_POSITION.bottom
+        });
+    };
 
     const leftOffset = useMemo(
-        () => calculateOffset(duration, startTime, width),
-        [duration, startTime, width]
+        () => calculateOffset(duration, trimStart, width),
+        [duration, trimStart, width]
     );
     const rightOffset = useMemo(
-        () => calculateOffset(duration, endTime, width, true),
-        [duration, endTime, width]
+        () => calculateOffset(duration, trimEnd, width, true),
+        [duration, trimEnd, width]
     );
     const canDisplayResponders = useMemo(() => (
         width -
@@ -333,9 +561,9 @@ export const Trimmer = () => {
     const shouldDisplayRightResponder = canDisplayResponders &&
         rightOffset > -CORNER_RESPONDER_WIDTH;
 
-    const trimmedDuration = endTime - startTime;
-    const currentTime = positionInMillis / 1000;
-    const trimmedCurrentTime = currentTime - startTime;
+    const trimmedDuration = trimEnd - trimStart;
+    const calculatedCurrentTime = positionInMillis / 1000;
+    const trimmedCurrentTime = calculatedCurrentTime - trimStart;
     const formattedDuration = formatTimeSpan({
         timeSpan: trimmedDuration,
         shouldIncludeMinutes: true,
@@ -352,7 +580,7 @@ export const Trimmer = () => {
     const pointerThumbOffset = calculatePointerThumbOffset(
         calculateOffset(
             duration,
-            currentTime,
+            calculatedCurrentTime,
             width
         ),
         leftOffset,
@@ -360,58 +588,96 @@ export const Trimmer = () => {
     );
 
     return (
-        <Root onLayout={event => setCurrentLayout(event.nativeEvent.layout)}>
+        <>
+            <Root onLayout={event => setCurrentLayout(event.nativeEvent.layout)}>
+                {maxVideoDurationInSeconds != null &&
+                    Math.floor(trimmedDuration) > maxVideoDurationInSeconds &&
+                    (
+                        <LimitMessage
+                            top={limitMessageHeight}
+                            onLayout={event => setLimitMessageLayout(event.nativeEvent.layout)}
+                        >
+                            {`Video exceeds ${maxVideoDurationInSeconds} seconds and will be trimmed to the first ${maxVideoDurationInSeconds} seconds.`}
+                        </LimitMessage>
+                    )
+                }
+                <Spacer />
+                <Time>
+                    {formattedCurrentTime}
+                    {' '}
+                    /
+                    {' '}
+                    {formattedDuration}
+                </Time>
+                <Spacer />
+                <Container>
+                    <Corners>
+                        <GestureDetector
+                            gesture={progressDragGesture}
+                        >
+                            <GestureDetector
+                                gesture={progressTapGesture}
+                            >
+                                <Progress />
+                            </GestureDetector>
+                        </GestureDetector>
+                        <LeftSection
+                            left={-width + PADDING}
+                            // eslint-disable-next-line react/forbid-component-props
+                            style={{
+                                transform: [{
+                                    translateX: leftCorner
+                                }]
+                            }}
+                            {...leftResponder.panHandlers}
+                        >
+                            <Row>
+                                {shouldDisplayLeftResponder && (
+                                    <LeftCornerResponder />
+                                )}
+                                <CornerLine width={width - PADDING} />
+                                <CornerThumb
+                                    source={resizerImage}
+                                    resizeMode='stretch'
+                                />
+                            </Row>
+                        </LeftSection>
+                        <RightSection
+                            right={-width + PADDING}
+                            // eslint-disable-next-line react/forbid-component-props
+                            style={{
+                                transform: [{
+                                    translateX: rightCorner
+                                }]
+                            }}
+                            {...rightResponder.panHandlers}
+                        >
+                            <Row>
+                                {shouldDisplayRightResponder && (
+                                    <RightCornerResponder />
+                                )}
+                                <CornerThumb
+                                    isRight
+                                    source={resizerImage}
+                                    resizeMode='stretch'
+                                />
+                                <CornerLine width={width - PADDING} />
+                            </Row>
+                        </RightSection>
+                        <PointerThumb left={pointerThumbOffset} />
+                    </Corners>
+                </Container>
+                <Spacer height={CORNERS_EXTRA_HEIGHT} />
+            </Root>
             <Spacer />
-            <Time>
-                {formattedCurrentTime}
-                {' '}
-                /
-                {' '}
-                {formattedDuration}
-            </Time>
-            <Spacer />
-            <Container>
-                <Corners>
-                    <LeftSection
-                        left={-width + PADDING}
-                        style={{
-                            transform: [{
-                                translateX: leftCorner
-                            }]
-                        }}
-                        {...leftResponder.panHandlers}
-                    >
-                        <Row>
-                            {shouldDisplayLeftResponder && (
-                                <LeftCornerResponder />
-                            )}
-                            <CornerLine width={width - PADDING} />
-                            <CornerThumb />
-                        </Row>
-                    </LeftSection>
-                    <RightSection
-                        right={-width + PADDING}
-                        style={{
-                            transform: [{
-                                translateX: rightCorner
-                            }]
-                        }}
-                        {...rightResponder.panHandlers}
-                    >
-                        <Row>
-                            {shouldDisplayRightResponder && (
-                                <RightCornerResponder />
-                            )}
-                            <CornerThumb />
-                            <CornerLine width={width - PADDING} />
-                        </Row>
-                    </RightSection>
-                    <PointerThumb left={pointerThumbOffset} />
-                </Corners>
-            </Container>
-            <Spacer height={CORNERS_EXTRA_HEIGHT} />
-            <Text>Test action</Text>
-            <Spacer />
-        </Root>
+            <BottomActions
+                isPlaying={isPlaying}
+                onPlay={onPlay}
+                isMuted={isMuted}
+                onMute={onMute}
+                onImageCapture={onImageCapture}
+                imageCaptureActionConfig={imageCaptureActionConfig}
+            />
+        </>
     );
 };

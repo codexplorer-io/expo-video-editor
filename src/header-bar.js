@@ -5,6 +5,11 @@ import {
     AppbarContent
 } from '@codexporer.io/expo-appbar';
 import {
+    useMessageDialogActions,
+    MESSAGE_DIALOG_TYPE
+} from '@codexporer.io/expo-message-dialog';
+import { Paragraph } from 'react-native-paper';
+import {
     useCloseVideoEditor,
     useIsReady,
     useVideoEditorConfigOnEditingComplete
@@ -16,18 +21,67 @@ export const HeaderBar = () => {
     const onEditingComplete = useVideoEditorConfigOnEditingComplete();
     const processVideo = useProcessVideo();
     const isReady = useIsReady();
-
-    const shouldDisableDoneButton = false;
-
-    const onFinishEditing = async () => {
-        // Confirm manipulations, generate new video and save, generate data and send into onEditingComplete
-        const videoData = await processVideo();
-        onEditingComplete?.(videoData);
-        closeVideoEditor();
-    };
+    const {
+        open: openMessageDialog,
+        close: closeMessageDialog
+    } = useMessageDialogActions();
 
     const onPressBack = () => {
-        closeVideoEditor();
+        openMessageDialog({
+            title: 'Discard Changes?',
+            renderContent: () => (
+                // eslint-disable-next-line max-len
+                <Paragraph>Closing the video editor will discard all changes. Are you sure you want to proceed?</Paragraph>
+            ),
+            actions: [
+                {
+                    id: 'no',
+                    handler: () => {
+                        closeMessageDialog();
+                    },
+                    text: 'No'
+                },
+                {
+                    id: 'yes',
+                    handler: () => {
+                        closeMessageDialog();
+                        closeVideoEditor();
+                    },
+                    text: 'Yes'
+                }
+            ],
+            type: MESSAGE_DIALOG_TYPE.warning
+        });
+    };
+
+    const onFinishEditing = () => {
+        openMessageDialog({
+            title: 'Confirm Changes?',
+            renderContent: () => (
+                // eslint-disable-next-line max-len
+                <Paragraph>By confirming, the video will be modified. Do you want to proceed?</Paragraph>
+            ),
+            actions: [
+                {
+                    id: 'no',
+                    handler: () => {
+                        closeMessageDialog();
+                    },
+                    text: 'No'
+                },
+                {
+                    id: 'yes',
+                    handler: async () => {
+                        closeMessageDialog();
+                        const videoData = await processVideo();
+                        onEditingComplete?.(videoData);
+                        closeVideoEditor();
+                    },
+                    text: 'Yes'
+                }
+            ],
+            type: MESSAGE_DIALOG_TYPE.warning
+        });
     };
 
     return (
@@ -41,7 +95,6 @@ export const HeaderBar = () => {
                 <AppbarAction
                     icon='check'
                     onPress={onFinishEditing}
-                    disabled={shouldDisableDoneButton}
                 />
             )}
         </Appbar>

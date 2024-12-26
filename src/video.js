@@ -11,6 +11,7 @@ import {
     useSetIsVideoComponentBusy,
     useSetIsVideoLoading,
     useSetPositionInMillis,
+    useSetIsPlaying,
     useSetVideoComponent,
     useVideoComponent,
     useVideoData
@@ -28,6 +29,7 @@ export const useVideo = () => {
     const videoComponent = useVideoComponent();
     const setIsVideoComponentBusy = useSetIsVideoComponentBusy();
     const setPositionInMillis = useSetPositionInMillis();
+    const setIsPlaying = useSetIsPlaying();
 
     const uriRef = useRef();
     uriRef.current = videoData?.uri;
@@ -58,6 +60,7 @@ export const useVideo = () => {
             }}
             onPlaybackStatusUpdate={status => {
                 setPositionInMillis(status?.positionMillis ?? 0);
+                setIsPlaying(status?.isPlaying ?? false);
             }}
         />
     );

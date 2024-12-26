@@ -15,7 +15,17 @@ const initialState = {
         config: {
             onEditingComplete: undefined,
             videoUri: undefined,
-            isLocal: false
+            isLocal: false,
+            maxVideoSize: undefined,
+            maxVideoDurationInSeconds: undefined,
+            imageCaptureAction: {
+                getIsVisible: () => false,
+                getIsEnabled: () => false,
+                onCapture: undefined,
+                maxImageSize: 0,
+                successMessage: 'Image saved',
+                label: 'Save As Image'
+            }
         }
     },
     isVideoLoading: false,
@@ -29,7 +39,11 @@ const initialState = {
     },
     videoComponent: null,
     isVideoComponentBusy: true,
-    positionInMillis: 0
+    positionInMillis: 0,
+    isPlaying: false,
+    trimStart: 0,
+    trimEnd: 0,
+    isMuted: false
 };
 
 const initializeNavigation = navigation => ({
@@ -102,6 +116,22 @@ const setPositionInMillis = positionInMillis => ({ setState }) => {
     setState({ positionInMillis });
 };
 
+const setIsPlaying = isPlaying => ({ setState }) => {
+    setState({ isPlaying });
+};
+
+const setTrimStart = trimStart => ({ setState }) => {
+    setState({ trimStart });
+};
+
+const setTrimEnd = trimEnd => ({ setState }) => {
+    setState({ trimEnd });
+};
+
+const setIsMuted = isMuted => ({ setState }) => {
+    setState({ isMuted });
+};
+
 const resetEditorState = () => ({ getState, setState }) => {
     setState({
         ...initialState,
@@ -122,6 +152,10 @@ const Store = createStore({
         setVideoComponent,
         setIsVideoComponentBusy,
         setPositionInMillis,
+        setIsPlaying,
+        setTrimStart,
+        setTrimEnd,
+        setIsMuted,
         resetEditorState
     },
     name: 'expoVideoEditor'
@@ -166,6 +200,36 @@ export const useVideoEditorConfigIsLocal = createStateHook(Store, {
             }
         }
     }) => isLocal
+});
+
+export const useVideoEditorConfigImageCaptureAction = createStateHook(Store, {
+    selector: ({
+        videoEditorState: {
+            config: {
+                imageCaptureAction
+            }
+        }
+    }) => imageCaptureAction
+});
+
+export const useVideoEditorConfigMaxVideoSize = createStateHook(Store, {
+    selector: ({
+        videoEditorState: {
+            config: {
+                maxVideoSize
+            }
+        }
+    }) => maxVideoSize
+});
+
+export const useVideoEditorConfigMaxVideoDurationInSeconds = createStateHook(Store, {
+    selector: ({
+        videoEditorState: {
+            config: {
+                maxVideoDurationInSeconds
+            }
+        }
+    }) => maxVideoDurationInSeconds
 });
 
 export const useInitializeNavigation = () => useActions().initializeNavigation;
@@ -222,5 +286,29 @@ export const usePositionInMillis = createStateHook(Store, {
 });
 
 export const useSetPositionInMillis = () => useActions().setPositionInMillis;
+
+export const useIsPlaying = createStateHook(Store, {
+    selector: ({ isPlaying }) => isPlaying
+});
+
+export const useSetIsPlaying = () => useActions().setIsPlaying;
+
+export const useTrimStart = createStateHook(Store, {
+    selector: ({ trimStart }) => trimStart
+});
+
+export const useSetTrimStart = () => useActions().setTrimStart;
+
+export const useTrimEnd = createStateHook(Store, {
+    selector: ({ trimEnd }) => trimEnd
+});
+
+export const useSetTrimEnd = () => useActions().setTrimEnd;
+
+export const useIsMuted = createStateHook(Store, {
+    selector: ({ isMuted }) => isMuted
+});
+
+export const useSetIsMuted = () => useActions().setIsMuted;
 
 export const useResetEditorState = () => useActions().resetEditorState;
